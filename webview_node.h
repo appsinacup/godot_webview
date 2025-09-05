@@ -2,8 +2,6 @@
 #define WEBVIEW_NODE_H
 
 #include "scene/gui/control.h"
-#include "core/os/thread.h"
-#include "core/os/mutex.h"
 
 // Forward declare the C webview handle
 typedef void *webview_t;
@@ -20,18 +18,9 @@ private:
 	bool is_initialized;
 	bool initialization_attempted;
 	
-	// Threading support
-	Thread webview_thread;
-	Mutex webview_mutex;
-	bool thread_should_stop;
-	
 	void _initialize_webview();
 	void _cleanup_webview();
 	void _try_initialize_safe();
-	
-	// Thread functions
-	static void _webview_thread_func(void *p_user);
-	void _webview_thread_main();
 
 protected:
 	static void _bind_methods();

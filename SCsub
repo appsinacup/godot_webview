@@ -71,9 +71,25 @@ if env["platform"] == "windows":
     env_webview.Append(CPPDEFINES=["WEBVIEW_EDGE"])
     
 elif env["platform"] == "macos":
-    # macOS: Uses WebKit
-    env_webview.Append(FRAMEWORKS=["WebKit", "Cocoa"])
+    # macOS: Uses WebKit - following webview documentation
+    # Documentation: c++ main.cc -O2 --std=c++11 -Ilibs -framework WebKit -ldl -o example
+    print("WebView: Configuring macOS build with WebKit framework and dl library")
+    
+    # Add frameworks and libraries for both environments
+    frameworks = ["WebKit", "Cocoa"]
+    libs = ["dl"]
+    
+    env_webview.Append(FRAMEWORKS=frameworks)
+    env_webview.Append(LIBS=libs)
     env_webview.Append(CPPDEFINES=["WEBVIEW_COCOA"])
+    
+    # Ensure webview library environment has the same
+    env_webview_lib.Append(FRAMEWORKS=frameworks)
+    env_webview_lib.Append(LIBS=libs)
+    env_webview_lib.Append(CPPDEFINES=["WEBVIEW_COCOA"])
+    
+    print("WebView: Added frameworks:", frameworks)
+    print("WebView: Added libraries:", libs)
     
 elif env["platform"] == "linuxbsd":
     # Linux: Uses WebKitGTK

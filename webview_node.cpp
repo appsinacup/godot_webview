@@ -46,7 +46,6 @@ WebViewNode::WebViewNode() {
 	debug_enabled = false;
 	is_initialized = false;
 	initialization_attempted = false;
-	thread_should_stop = false;
 	set_clip_contents(true);
 	set_focus_mode(Control::FOCUS_ALL);
 	print_line("WebView: Constructor completed");
@@ -54,17 +53,6 @@ WebViewNode::WebViewNode() {
 
 WebViewNode::~WebViewNode() {
 	print_line("WebView: Destructor called");
-	
-	// Signal thread to stop
-	thread_should_stop = true;
-	
-	// Wait for thread to finish
-	if (webview_thread.is_started()) {
-		print_line("WebView: Waiting for webview thread to finish");
-		webview_thread.wait_to_finish();
-		print_line("WebView: Webview thread finished");
-	}
-	
 	_cleanup_webview();
 	print_line("WebView: Destructor completed");
 }
@@ -110,7 +98,7 @@ void WebViewNode::_initialize_webview() {
 		return;
 	}
 
-	print_line("WebView: Starting webview on background thread");
+	print_line("WebView: Initializing webview on MAIN THREAD (as required by WebKit)");
 	
 	// Add a safety check - defer initialization if we're not ready
 	if (!is_inside_tree()) {
@@ -119,14 +107,42 @@ void WebViewNode::_initialize_webview() {
 		return;
 	}
 	
-	// Start the webview on a background thread
-	if (!webview_thread.is_started()) {
-		print_line("WebView: Starting webview thread");
-		webview_thread.start(_webview_thread_func, this);
-		print_line("WebView: Webview thread started");
+	print_line("WebView: Current URL to load: '" + current_url + "'");
+	print_line("WebView: Debug enabled: " + String::num(debug_enabled));
+	
+	// Create webview on MAIN THREAD (as required by WebKit on macOS)
+	print_line("WebView: About to call webview_create() on main thread");
+	
+	webview = webview_create(debug_enabled ? 1 : 0, nullptr);
+	
+	print_line("WebView: webview_create() call completed!");
+	
+	if (!webview) {
+		print_line("WebView: ERROR - webview_create() returned nullptr");
+		ERR_PRINT("Failed to create WebView instance");
+		return;
 	}
 	
-	print_line("WebView: _initialize_webview() completed - webview will be created on background thread");
+	print_line("WebView: SUCCESS - webview_create() returned a valid webview instance!");
+	is_initialized = true;
+	
+	// Set window properties
+	print_line("WebView: Setting window title and size");
+	webview_set_title(webview, "Godot WebView - Test Window");
+	webview_set_size(webview, 1024, 768, WEBVIEW_HINT_NONE);
+	
+	// Load initial content
+	if (!current_url.is_empty()) {
+		print_line("WebView: Loading initial URL: " + current_url);
+		webview_navigate(webview, current_url.utf8().get_data());
+	} else {
+		print_line("WebView: Loading default content");
+		webview_set_html(webview, "<h1>WebView initialized successfully!</h1><p>This should be visible in a separate window.</p><p>Initialized on main thread without webview_run().</p>");
+	}
+	
+	print_line("WebView: WebView initialized successfully on main thread");
+	print_line("WebView: NOTE - NOT calling webview_run() to avoid blocking Godot's main thread");
+	print_line("WebView: The webview window should be visible now");
 }
 
 void WebViewNode::_cleanup_webview() {
@@ -149,11 +165,7 @@ void WebViewNode::load_url(const String &p_url) {
 	print_line("WebView: load_url() called with: " + p_url);
 	current_url = p_url;
 	
-	webview_mutex.lock();
-	bool initialized = is_initialized;
-	webview_mutex.unlock();
-	
-	if (!initialized) {
+	if (!is_initialized) {
 		print_line("WebView: Not initialized yet, URL will be loaded when ready");
 		return; // Will be loaded when webview is ready
 	}
@@ -163,24 +175,10 @@ void WebViewNode::load_url(const String &p_url) {
 		return;
 	}
 
-	print_line("WebView: Using webview_dispatch to navigate on webview thread");
+	print_line("WebView: Calling webview_navigate() on main thread");
+	webview_navigate(webview, p_url.utf8().get_data());
+	print_line("WebView: webview_navigate() completed");
 	
-	// Use webview_dispatch to safely navigate on the webview thread
-	struct NavigateData {
-		const char* url;
-	};
-	
-	// Note: This is a simplified approach - in a real implementation
-	// we'd need to ensure the URL string stays valid until the dispatch executes
-	NavigateData* data = new NavigateData{p_url.utf8().get_data()};
-	
-	webview_dispatch(webview, [](webview_t w, void* arg) {
-		NavigateData* nav_data = static_cast<NavigateData*>(arg);
-		webview_navigate(w, nav_data->url);
-		delete nav_data;
-	}, data);
-	
-	print_line("WebView: Navigation dispatched to webview thread");
 	emit_signal("page_loaded", p_url);
 	print_line("WebView: page_loaded signal emitted");
 }
@@ -293,77 +291,4 @@ Vector2i WebViewNode::get_webview_size() const {
 
 Size2 WebViewNode::get_minimum_size() const {
 	return Size2(100, 100);
-}
-
-// Thread functions
-void WebViewNode::_webview_thread_func(void *p_user) {
-	WebViewNode *self = static_cast<WebViewNode *>(p_user);
-	self->_webview_thread_main();
-}
-
-void WebViewNode::_webview_thread_main() {
-	print_line("WebView: Thread started");
-	
-	// Print the URL we're supposed to load
-	print_line("WebView: Current URL to load: '" + current_url + "'");
-	print_line("WebView: Debug enabled: " + String::num(debug_enabled));
-	
-	// Create webview on this background thread
-	print_line("WebView: About to call webview_create(debug=" + String::num(debug_enabled) + ", window=nullptr)");
-	print_line("WebView: This is the call that has been hanging...");
-	
-	// Try creating with debug disabled first to see if that's the issue
-	int debug_flag = 0; // Start with debug disabled
-	print_line("WebView: Calling webview_create with debug=0 (disabled) first");
-	
-	webview = webview_create(debug_flag, nullptr);
-	
-	print_line("WebView: webview_create() call completed!");
-	
-	if (!webview) {
-		print_line("WebView: ERROR - webview_create() returned nullptr");
-		return;
-	}
-	
-	print_line("WebView: SUCCESS - webview_create() returned a valid webview instance!");
-	
-	// Lock mutex and mark as initialized
-	webview_mutex.lock();
-	is_initialized = true;
-	webview_mutex.unlock();
-	
-	print_line("WebView: Marked as initialized, setting up window...");
-	
-	// Set window properties to make it visible
-	print_line("WebView: Setting window title and size");
-	webview_set_title(webview, "Godot WebView - Test Window");
-	webview_set_size(webview, 1024, 768, WEBVIEW_HINT_NONE);
-	
-	// Load initial content
-	if (!current_url.is_empty()) {
-		print_line("WebView: Loading initial URL on thread: " + current_url);
-		webview_navigate(webview, current_url.utf8().get_data());
-	} else {
-		print_line("WebView: Loading default content on thread");
-		webview_set_html(webview, "<h1>WebView initialized successfully!</h1><p>This should be visible in a separate window.</p><p>URL: about:blank</p>");
-	}
-	
-	print_line("WebView: About to start webview_run() - this should show a window");
-	
-	// Run the webview event loop on this thread
-	// This will block until the webview window is closed
-	webview_run(webview);
-	
-	print_line("WebView: webview_run() completed - window was closed");
-	
-	// Clean up
-	webview_mutex.lock();
-	if (webview) {
-		webview_destroy(webview);
-		webview = nullptr;
-	}
-	is_initialized = false;
-	webview_mutex.unlock();
-	
-	print_line("WebView: Thread finished");
 }
